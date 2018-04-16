@@ -72,6 +72,7 @@ function filesize($length) {
 function basedir($global) { if($global) { return $globaldir } $scoopdir }
 function appsdir($global) { "$(basedir $global)\apps" }
 function shimdir($global) { "$(basedir $global)\shims" }
+function lnksdir($global) { "$(basedir $global)\lnks" }
 function appdir($app, $global) { "$(appsdir $global)\$app" }
 function versiondir($app, $version, $global) { "$(appdir $app $global)\$version" }
 function persistdir($app, $global) { "$(basedir $global)\persist\$app" }
@@ -250,7 +251,7 @@ function movedir($from, $to) {
     }
 }
 
-function shim($path, $global, $name, $arg) {
+function shim($path, $global, $name, $arg, $manifest) {
     if(!(test-path $path)) { abort "Can't shim '$(fname $path)': couldn't find '$path'." }
     $abs_shimdir = ensure (shimdir $global)
     if(!$name) { $name = strip_ext (fname $path) }
@@ -281,6 +282,15 @@ function shim($path, $global, $name, $arg) {
     }
 
     if($path -match '\.exe$') {
+        # creat lnk
+        if($manifest){
+            if($manifest.lnk){
+                if ("$($manifest.lnk)" -eq "yes") {
+                    lnk_create $path $global $name
+                }
+            }
+        }        
+        
         # for programs with no awareness of any shell
         Copy-Item "$(versiondir 'scoop' 'current')\supporting\shimexe\bin\shim.exe" "$shim.exe" -force
         write-output "path = $resolved_path" | out-file "$shim.shim" -encoding utf8
@@ -310,6 +320,103 @@ powershell -noprofile -ex unrestricted `"& '$resolved_path' %args%;exit `$lastex
         "@java -jar `"$resolved_path`" $arg %*" | out-file "$shim.cmd" -encoding ascii
         "#!/bin/sh`njava -jar `"$resolved_path`" $arg `"$@`"" | out-file $shim -encoding ascii
     }
+}
+
+function shim_check_lnk($manifest, $path, $global, $name, $arg) {
+    if(!(test-path $path)) { abort "Can't shim '$(fname $path)': couldn't find '$path'." }
+    $abs_shimdir = ensure (shimdir $global)
+    if(!$name) { $name = strip_ext (fname $path) }
+
+    $shim = "$abs_shimdir\$($name.tolower())"
+
+    # convert to relative path
+    Push-Location $abs_shimdir
+    $relative_path = resolve-path -relative $path
+    Pop-Location
+    $resolved_path = resolve-path $path
+
+    # if $path points to another drive resolve-path prepends .\ which could break shims
+    if($relative_path -match "^(.\\[\w]:).*$") {
+        write-output "`$path = `"$path`"" | out-file "$shim.ps1" -encoding utf8
+    } else {
+        write-output "`$path = join-path `"`$psscriptroot`" `"$relative_path`"" | out-file "$shim.ps1" -encoding utf8
+    }
+
+    if($arg) {
+        write-output "`$args = '$($arg -join "', '")', `$args" | out-file "$shim.ps1" -encoding utf8 -append
+    }
+
+    if($path -match '\.jar$') {
+        "if(`$myinvocation.expectingInput) { `$input | & java -jar `$path @args } else { & java -jar `$path @args }" | out-file "$shim.ps1" -encoding utf8 -append
+    } else {
+        "if(`$myinvocation.expectingInput) { `$input | & `$path @args } else { & `$path @args }" | out-file "$shim.ps1" -encoding utf8 -append
+    }
+
+    if($path -match '\.exe$') {
+        # creat lnk
+        if($manifest){
+            if($manifest.lnk){
+                if ("$($manifest.lnk)" -eq "yes") {
+                    $lnk_path = ""
+                    if($manifest.category){
+                        $lnk_path = $manifest.category -replace "\.", "\"
+                        debug "IN-Cate:lnk_path: $lnk_path"
+                    }
+                    debug "OUT-Cate:lnk_path: $lnk_path"
+                    lnk_create $path $global $name $lnk_path
+                }
+            }
+        }        
+        
+        # for programs with no awareness of any shell
+        Copy-Item "$(versiondir 'scoop' 'current')\supporting\shimexe\bin\shim.exe" "$shim.exe" -force
+        write-output "path = $resolved_path" | out-file "$shim.shim" -encoding utf8
+        if($arg) {
+            write-output "args = $arg" | out-file "$shim.shim" -encoding utf8 -append
+        }
+    } elseif($path -match '\.((bat)|(cmd))$') {
+        # shim .bat, .cmd so they can be used by programs with no awareness of PSH
+        "@`"$resolved_path`" $arg %*" | out-file "$shim.cmd" -encoding ascii
+
+        "#!/bin/sh`ncmd //C `"$resolved_path`" $arg `"$@`"" | out-file $shim -encoding ascii
+    } elseif($path -match '\.ps1$') {
+        # make ps1 accessible from cmd.exe
+        "@echo off
+setlocal enabledelayedexpansion
+set args=%*
+:: replace problem characters in arguments
+set args=%args:`"='%
+set args=%args:(=``(%
+set args=%args:)=``)%
+set invalid=`"='
+if !args! == !invalid! ( set args= )
+powershell -noprofile -ex unrestricted `"& '$resolved_path' %args%;exit `$lastexitcode`"" | out-file "$shim.cmd" -encoding ascii
+
+        "#!/bin/sh`npowershell -ex unrestricted `"$resolved_path`" $arg `"$@`"" | out-file $shim -encoding ascii
+    } elseif($path -match '\.jar$') {
+        "@java -jar `"$resolved_path`" $arg %*" | out-file "$shim.cmd" -encoding ascii
+        "#!/bin/sh`njava -jar `"$resolved_path`" $arg `"$@`"" | out-file $shim -encoding ascii
+    }
+}
+
+function lnk_create ($path, $global, $name, $lnk_path) {
+    $abs_lnksdir = ensure (lnksdir $global)
+    if(!$name) { $name = strip_ext (fname $path) }
+
+    $lnk_final_path = "$abs_lnksdir$lnk_path"
+    ensure($lnk_final_path)
+    $lnk = "$lnk_final_path\$($name.tolower()).lnk"
+
+    $Shell = New-Object -ComObject ("WScript.Shell")
+    $ShortCut = $Shell.CreateShortcut($lnk)
+    $ShortCut.TargetPath=$path
+    # $ShortCut.Arguments="-arguementsifrequired"
+    $ShortCut.WorkingDirectory = [System.IO.Path]::GetDirectoryName($path);
+    $ShortCut.WindowStyle = 1;
+    # $ShortCut.Hotkey = "CTRL+SHIFT+F";
+    $ShortCut.IconLocation = "$path, 0";
+    $ShortCut.Description = "Your Custom Shortcut Description";
+    $ShortCut.Save()
 }
 
 function ensure_in_path($dir, $global) {
