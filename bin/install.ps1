@@ -19,7 +19,7 @@ if((get-executionpolicy) -gt 'RemoteSigned') {
 }
 
 # get core functions
-$core_url = 'https://raw.github.com/lukesampson/scoop/master/lib/core.ps1'
+$core_url = 'https://github.com/starwithmoon/scoop/blob/master/lib/core.ps1'
 Write-Output 'Initializing...'
 Invoke-Expression (new-object net.webclient).downloadstring($core_url)
 
@@ -32,7 +32,7 @@ if(installed 'scoop') {
 $dir = ensure (versiondir 'scoop' 'current')
 
 # download scoop zip
-$zipurl = 'https://github.com/lukesampson/scoop/archive/master.zip'
+$zipurl = 'https://github.com/starwithmoon/scoop/archive/master.zip'
 $zipfile = "$dir\scoop.zip"
 Write-Output 'Downloading...'
 dl $zipurl $zipfile
