@@ -37,7 +37,7 @@ $independent = $opt.i -or $opt.independent
 # load config
 $repo = $(scoop config SCOOP_REPO)
 if(!$repo) {
-    $repo = "https://github.com/lukesampson/scoop"
+    $repo = "https://github.com/starwithmoon/scoop" #https://github.com/starwithmoon/scoop
     scoop config SCOOP_REPO "$repo"
 }
 
